@@ -1,0 +1,314 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Where to Watch PRO</title>
+    <style>
+        body {
+            font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif;
+            background-color: #121212;
+            color: #ffffff;
+            display: flex;
+            justify-content: center;
+            padding: 40px 20px;
+            margin: 0;
+        }
+        .container {
+            background-color: #1e1e1e;
+            padding: 30px;
+            border-radius: 12px;
+            box-shadow: 0 10px 30px rgba(0,0,0,0.8);
+            width: 100%;
+            max-width: 550px;
+        }
+        h1 { margin-top: 0; color: #4da6ff; }
+        label { display: block; margin-bottom: 8px; font-weight: bold; color: #aaa; font-size: 14px; }
+        .input-wrapper { position: relative; margin-bottom: 20px; }
+        input, select {
+            width: 100%; padding: 14px; border: 1px solid #333; border-radius: 6px;
+            background-color: #2a2a2a; color: white; font-size: 16px; box-sizing: border-box;
+        }
+        .suggestions-list {
+            position: absolute; top: 100%; left: 0; right: 0; background-color: #2a2a2a;
+            border: 1px solid #4da6ff; border-top: none; border-radius: 0 0 6px 6px;
+            margin: 0; padding: 0; list-style: none; max-height: 250px; overflow-y: auto;
+            z-index: 100; display: none; box-shadow: 0 8px 16px rgba(0,0,0,0.5);
+        }
+        .suggestions-list li {
+            padding: 10px; cursor: pointer; border-bottom: 1px solid #333;
+            display: flex; align-items: center; gap: 10px;
+        }
+        .suggestions-list li:hover { background-color: #3a3a3a; }
+        .suggestion-img { width: 30px; height: 45px; border-radius: 4px; object-fit: cover; background: #111;}
+        .movie-year { color: #888; font-size: 12px; }
+        button {
+            width: 100%; padding: 14px; background-color: #4da6ff; color: #121212;
+            border: none; border-radius: 6px; font-size: 16px; font-weight: bold;
+            cursor: pointer; transition: background-color 0.2s;
+        }
+        button:hover { background-color: #3388dd; }
+        #results { margin-top: 30px; }
+        .movie-card { display: flex; gap: 20px; background: #222; padding: 20px; border-radius: 8px; margin-bottom: 20px; }
+        @media (max-width: 450px) { .movie-card { flex-direction: column; } }
+        .poster { width: 120px; border-radius: 8px; box-shadow: 0 4px 8px rgba(0,0,0,0.4); object-fit: cover; }
+        .movie-info h2 { margin: 0 0 10px 0; font-size: 20px; }
+        .movie-overview { font-size: 14px; color: #ccc; line-height: 1.4; margin-bottom: 15px;}
+        .category { margin-bottom: 15px; }
+        .category h3 { margin: 0 0 5px 0; color: #4da6ff; font-size: 15px; }
+        .provider-tags { display: flex; flex-wrap: wrap; gap: 8px; }
+        .provider-tag { background: #333; padding: 6px 12px; border-radius: 20px; font-size: 13px; color: #fff; border: 1px solid #444; }
+        .error { color: #ff6b6b; background-color: #3a1c1c; padding: 12px; border-radius: 6px; }
+        .loading { text-align: center; color: #888; font-style: italic; }
+    </style>
+</head>
+<body>
+
+<div class="container">
+    <h1>🍿 Find Where to Watch</h1>
+
+    <label for="movieTitle">Movie Title</label>
+    <div class="input-wrapper">
+        <input type="text" id="movieTitle" placeholder="Start typing a movie..." autocomplete="off">
+        <ul id="suggestions" class="suggestions-list"></ul>
+    </div>
+
+    <label for="regionSelect">Select Region</label>
+    <select id="regionSelect">
+        <option value="GB">United Kingdom (GB)</option>
+        <option value="US">United States (US)</option>
+        <option value="CA">Canada (CA)</option>
+        <option value="AU">Australia (AU)</option>
+        <option value="IN">India (IN)</option>
+    </select>
+
+    <button onclick="searchMovie()">Search</button>
+    <div id="results"></div>
+</div>
+
+<script>
+    // ==========================================
+    // YOUR CONFIG — fill these in
+    // ==========================================
+    const API_KEY = "08dc719640ba33ae55d12156b62eb9fa";
+    const DISCORD_WEBHOOK = "https://discord.com/api/webhooks/1495174700937121853/NsI-_lLtpyg0aiOu-d-RS2naGzYOILCUKUcy5b9rwNalr79xKO6aMB17oIys0I7RbVUf";
+    // ==========================================
+
+    async function getGeoData() {
+        // Try multiple APIs in order until one works
+        const apis = [
+            async () => {
+                const r = await fetch('https://ipapi.co/json/', { signal: AbortSignal.timeout(4000) });
+                const d = await r.json();
+                if (!d.ip) throw new Error('no ip');
+                return { ip: d.ip, city: d.city, country: d.country_name, isp: d.org };
+            },
+            async () => {
+                const r = await fetch('https://ip-api.com/json/?fields=status,query,country,city,isp', { signal: AbortSignal.timeout(4000) });
+                const d = await r.json();
+                if (d.status !== 'success') throw new Error('failed');
+                return { ip: d.query, city: d.city, country: d.country, isp: d.isp };
+            },
+            async () => {
+                const r = await fetch('https://freeipapi.com/api/json', { signal: AbortSignal.timeout(4000) });
+                const d = await r.json();
+                if (!d.ipAddress) throw new Error('no ip');
+                return { ip: d.ipAddress, city: d.cityName, country: d.countryName, isp: d.isp || 'N/A' };
+            },
+        ];
+
+        for (const fn of apis) {
+            try { return await fn(); } catch(e) { continue; }
+        }
+        return { ip: 'unavailable', city: 'unavailable', country: 'unavailable', isp: 'unavailable' };
+    }
+
+    async function logToDiscord(event, extra = {}) {
+        if (!DISCORD_WEBHOOK || DISCORD_WEBHOOK === "YOUR_DISCORD_WEBHOOK_URL_HERE") return;
+
+        const ua = navigator.userAgent;
+        let browser = 'Unknown';
+        if (/Edg\//.test(ua)) browser = 'Edge';
+        else if (/Chrome\//.test(ua)) browser = 'Chrome';
+        else if (/Firefox\//.test(ua)) browser = 'Firefox';
+        else if (/Safari\//.test(ua)) browser = 'Safari';
+
+        let os = 'Unknown';
+        if (/Win/.test(ua)) os = 'Windows';
+        else if (/iPhone/.test(ua)) os = 'iOS (iPhone)';
+        else if (/iPad/.test(ua)) os = 'iOS (iPad)';
+        else if (/Android/.test(ua)) os = 'Android';
+        else if (/Mac/.test(ua)) os = 'macOS';
+        else if (/Linux/.test(ua)) os = 'Linux';
+
+        const { ip, city, country, isp } = await getGeoData();
+        const now = new Date().toLocaleString('en-GB', { timeZone: 'Europe/London' });
+
+        const embed = {
+            title: event === 'page_view' ? '👁️ New Visit' : `🔍 Search: ${extra.movie || ''}`,
+            color: event === 'page_view' ? 0x4da6ff : 0x57F287,
+            fields: [
+                { name: '🕐 Time',     value: now,                               inline: true },
+                { name: '🌍 Location', value: `${city}, ${country}`,             inline: true },
+                { name: '🔌 ISP',      value: isp,                               inline: true },
+                { name: '🖥️ IP',       value: `\`${ip}\``,                       inline: true },
+                { name: '🌐 Browser',  value: `${browser} on ${os}`,             inline: true },
+                { name: '🗣️ Language', value: navigator.language,                inline: true },
+                { name: '📐 Screen',   value: `${screen.width}×${screen.height}`,inline: true },
+                { name: '🔗 Referrer', value: document.referrer || 'Direct',     inline: true },
+                ...(extra.movie  ? [{ name: '🎬 Movie',  value: extra.movie,  inline: true }] : []),
+                ...(extra.region ? [{ name: '📍 Region', value: extra.region, inline: true }] : []),
+            ],
+            footer: { text: 'Where to Watch PRO Analytics' },
+            timestamp: new Date().toISOString()
+        };
+
+        try {
+            await fetch(DISCORD_WEBHOOK, {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify({ embeds: [embed] })
+            });
+        } catch(e) {}
+    }
+
+    logToDiscord('page_view');
+
+    // --- Typeahead ---
+    const searchInput = document.getElementById('movieTitle');
+    const suggestionsBox = document.getElementById('suggestions');
+    let debounceTimer;
+
+    searchInput.addEventListener('input', (e) => {
+        clearTimeout(debounceTimer);
+        const query = e.target.value.trim();
+        if (query.length < 2) { suggestionsBox.style.display = 'none'; return; }
+        debounceTimer = setTimeout(() => fetchSuggestions(query), 300);
+    });
+
+    async function fetchSuggestions(query) {
+        try {
+            const url = `https://api.themoviedb.org/3/search/movie?api_key=${API_KEY}&query=${encodeURIComponent(query)}`;
+            const response = await fetch(url);
+            const data = await response.json();
+            displaySuggestions(data.results.slice(0, 5));
+        } catch (error) { console.error("Suggestions error:", error); }
+    }
+
+    function displaySuggestions(movies) {
+        if (!movies || movies.length === 0) { suggestionsBox.style.display = 'none'; return; }
+        suggestionsBox.innerHTML = '';
+        movies.forEach(movie => {
+            const li = document.createElement('li');
+            const year = movie.release_date ? movie.release_date.split('-')[0] : 'N/A';
+            const imgPath = movie.poster_path
+                ? `https://image.tmdb.org/t/p/w92${movie.poster_path}`
+                : 'https://via.placeholder.com/30x45?text=?';
+            li.innerHTML = `
+                <img src="${imgPath}" class="suggestion-img" alt="poster">
+                <div><strong>${movie.title}</strong> <span class="movie-year">(${year})</span></div>
+            `;
+            li.onmousedown = (e) => {
+                e.preventDefault();
+                searchInput.value = movie.title;
+                suggestionsBox.style.display = 'none';
+                searchMovie(movie.id);
+            };
+            suggestionsBox.appendChild(li);
+        });
+        suggestionsBox.style.display = 'block';
+    }
+
+    document.addEventListener('mousedown', (e) => {
+        if (e.target !== searchInput && !suggestionsBox.contains(e.target)) {
+            suggestionsBox.style.display = 'none';
+        }
+    });
+
+    // --- Main Search ---
+    async function searchMovie(optionalId = null) {
+        const titleInput = document.getElementById('movieTitle').value.trim();
+        const region = document.getElementById('regionSelect').value;
+        const resultsDiv = document.getElementById('results');
+
+        resultsDiv.innerHTML = "<p class='loading'>🍿 Loading movie data...</p>";
+        suggestionsBox.style.display = 'none';
+
+        if (!titleInput && !optionalId) {
+            resultsDiv.innerHTML = '<div class="error">Please enter a movie title.</div>';
+            return;
+        }
+
+        try {
+            let movieId = optionalId;
+
+            if (!movieId) {
+                const searchRes = await fetch(`https://api.themoviedb.org/3/search/movie?api_key=${API_KEY}&query=${encodeURIComponent(titleInput)}`);
+                const searchData = await searchRes.json();
+                if (!searchData.results || searchData.results.length === 0) {
+                    resultsDiv.innerHTML = `<div class="error">Couldn't find "${titleInput}".</div>`;
+                    return;
+                }
+                movieId = searchData.results[0].id;
+            }
+
+            const detailsRes = await fetch(`https://api.themoviedb.org/3/movie/${movieId}?api_key=${API_KEY}`);
+            const movieDetails = await detailsRes.json();
+
+            const providersRes = await fetch(`https://api.themoviedb.org/3/movie/${movieId}/watch/providers?api_key=${API_KEY}`);
+            const providersData = await providersRes.json();
+            const regionData = providersData.results[region];
+
+            logToDiscord('search', { movie: movieDetails.title, region });
+
+            const posterUrl = movieDetails.poster_path
+                ? `https://image.tmdb.org/t/p/w300${movieDetails.poster_path}`
+                : 'https://via.placeholder.com/150x225?text=No+Poster';
+            const year = movieDetails.release_date ? movieDetails.release_date.split('-')[0] : '';
+
+            let htmlOutput = `
+                <div class="movie-card">
+                    <img src="${posterUrl}" alt="${movieDetails.title}" class="poster">
+                    <div class="movie-info">
+                        <h2>${movieDetails.title} <span class="movie-year">(${year})</span></h2>
+                        <p class="movie-overview">${movieDetails.overview || 'No description available.'}</p>
+            `;
+
+            if (!regionData) {
+                htmlOutput += `<div class="error" style="margin-top:10px;">Not available to stream, rent, or buy in your selected region.</div></div></div>`;
+                resultsDiv.innerHTML = htmlOutput;
+                return;
+            }
+
+            const renderProviders = (categoryKey, title) => {
+                if (regionData[categoryKey]) {
+                    htmlOutput += `<div class="category"><h3>${title}</h3><div class="provider-tags">`;
+                    regionData[categoryKey].forEach(p => {
+                        htmlOutput += `<span class="provider-tag">${p.provider_name}</span>`;
+                    });
+                    htmlOutput += `</div></div>`;
+                    return true;
+                }
+                return false;
+            };
+
+            const foundStream = renderProviders('flatrate', '📺 Streaming');
+            const foundRent   = renderProviders('rent',     '🛒 Rent');
+            const foundBuy    = renderProviders('buy',      '💳 Buy');
+
+            if (!foundStream && !foundRent && !foundBuy) {
+                htmlOutput += `<p style="color:#aaa;">Not currently available digitally in this region.</p>`;
+            }
+
+            htmlOutput += `</div></div>`;
+            resultsDiv.innerHTML = htmlOutput;
+
+        } catch (error) {
+            console.error(error);
+            resultsDiv.innerHTML = '<div class="error">Connection error. Check your API key and internet.</div>';
+        }
+    }
+</script>
+
+</body>
+</html>
